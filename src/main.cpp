@@ -26,5 +26,5 @@ void setup() {
 void loop() {
   // O loop principal fica vazio pois as tasks do FreeRTOS gerenciam tudo
   // Pequeno delay para evitar watchdog reset
-  delay(1000);
+  delay(100);
 }
