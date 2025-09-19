@@ -4,9 +4,9 @@
 #include <Arduino.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hardware_hal.h"
 
 // Configurações do módulo de blink
-#define LED_PIN 2
 #define BLINK_TASK_STACK_SIZE 2048
 #define BLINK_TASK_PRIORITY 1
 

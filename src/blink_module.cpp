@@ -10,7 +10,7 @@ static void blink_task(void *pvParameters) {
     (void) pvParameters;
     
     // Configurar o pino do LED
-    pinMode(LED_PIN, OUTPUT);
+    pinMode(HAL_LED_BUILTIN_PIN, OUTPUT);
     
     // Enviar mensagem de inicialização
     serial_send_message("Blink module initialized");
@@ -18,17 +18,17 @@ static void blink_task(void *pvParameters) {
     while (1) {
         if (current_config.enabled) {
             // Ligar LED
-            digitalWrite(LED_PIN, HIGH);
+            digitalWrite(HAL_LED_BUILTIN_PIN, HIGH);
             serial_send_message("LED ON");
             vTaskDelay(pdMS_TO_TICKS(current_config.on_time_ms));
             
             // Desligar LED
-            digitalWrite(LED_PIN, LOW);
+            digitalWrite(HAL_LED_BUILTIN_PIN, LOW);
             serial_send_message("LED OFF");
             vTaskDelay(pdMS_TO_TICKS(current_config.off_time_ms));
         } else {
             // Se desabilitado, manter LED desligado e verificar a cada 100ms
-            digitalWrite(LED_PIN, LOW);
+            digitalWrite(HAL_LED_BUILTIN_PIN, LOW);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }

@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "hardware_hal.h"
 
 // Configurações do módulo serial
 #define SERIAL_TASK_STACK_SIZE 4096

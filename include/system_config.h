@@ -1,8 +1,10 @@
 #ifndef SYSTEM_CONFIG_H
 #define SYSTEM_CONFIG_H
 
+#include "hardware_hal.h"
+
 // Configurações gerais do sistema
-#define SYSTEM_BAUD_RATE 115200
+#define SYSTEM_BAUD_RATE HAL_UART0_BAUD_RATE
 
 // Prioridades das tasks (quanto maior o número, maior a prioridade)
 #define PRIORITY_SERIAL 2

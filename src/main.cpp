@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "hardware_hal.h"
 #include "blink_module.h"
 #include "serial_module.h"
 #include "system_config.h"
