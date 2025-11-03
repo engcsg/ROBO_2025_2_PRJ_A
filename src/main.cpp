@@ -3,6 +3,7 @@
 #include "blink_module.h"
 #include "serial_module.h"
 #include "system_config.h"
+#include "stepper_task.h"
 
 void setup() {
   // Inicializar comunicação serial primeiro
@@ -22,6 +23,9 @@ void setup() {
   // Configurar blink inicial
   blink_config_t initial_config = {500, 500, true};
   blink_set_config(initial_config);
+
+  // Inicializar task do motor de passo
+  stepper_task_init();
 }
 
 void loop() {
