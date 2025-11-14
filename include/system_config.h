@@ -7,6 +7,8 @@
 #define ENABLE_TASK_BLINK         1
 #define ENABLE_TASK_STEPPER_BASE  1
 #define ENABLE_TASK_STEPPER_ARM   1
+#define ENABLE_TASK_POT_BASE      1
+#define ENABLE_TASK_POT_ARM       1
 
 #define SERIAL_TASK_STACK_SIZE    4096
 #define SERIAL_TASK_PRIORITY      3
@@ -22,6 +24,10 @@
 
 #define STEPPER_DEFAULT_RELEASE   true
 #define STEPPER_DEFAULT_USE_RAMP  true
+
+#define POT_TASK_STACK_SIZE       2048
+#define POT_TASK_PRIORITY         1
+#define POT_SAMPLE_DELAY_MS       50
 
 #define SERIAL_COMMAND_PROMPT     "> "
 

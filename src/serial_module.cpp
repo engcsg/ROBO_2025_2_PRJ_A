@@ -1,10 +1,12 @@
 #include "serial_module.h"
 
+#include "potentiometer_task.h"
 #include "stepper_task.h"
 #include "system_config.h"
 
 #include <cstring>
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 static TaskHandle_t serial_task_handle = nullptr;
@@ -16,6 +18,123 @@ static serial_task_config_t serial_config = {
 };
 
 static QueueHandle_t cached_stepper_event_queue = nullptr;
+
+static int tokenize_command(const String& command, String tokens[], int max_tokens) {
+    int count = 0;
+    int length = command.length();
+    int index = 0;
+
+    while (index < length && count < max_tokens) {
+        while (index < length && isspace(static_cast<unsigned char>(command[index]))) {
+            index++;
+        }
+        if (index >= length) {
+            break;
+        }
+        int start = index;
+        while (index < length && !isspace(static_cast<unsigned char>(command[index]))) {
+            index++;
+        }
+        tokens[count++] = command.substring(start, index);
+    }
+
+    return count;
+}
+
+static const char* pot_name(potentiometer_id_t pot_id) {
+    switch (pot_id) {
+        case POTENTIOMETER_BASE:
+            return "BASE";
+        case POTENTIOMETER_ARM:
+            return "BRACO";
+        default:
+            return "?";
+    }
+}
+
+static bool token_to_pot_id(const String& token, potentiometer_id_t* out_id) {
+    if (out_id == nullptr || token.length() == 0) {
+        return false;
+    }
+
+    char axis = token[0];
+    if (axis == 'X' || token.startsWith("BASE")) {
+        *out_id = POTENTIOMETER_BASE;
+        return true;
+    }
+    if (axis == 'Y' || token.startsWith("BRACO") || token.startsWith("ARM")) {
+        *out_id = POTENTIOMETER_ARM;
+        return true;
+    }
+
+    return false;
+}
+
+static void handle_pot_calibration_command(const String& command, bool set_min) {
+    String tokens[3];
+    int count = tokenize_command(command, tokens, 3);
+    if (count < 2) {
+        HAL_SERIAL_PORT.println("Uso: POTMIN <X|Y> ou POTMAX <X|Y>");
+        return;
+    }
+
+    potentiometer_id_t pot_id;
+    if (!token_to_pot_id(tokens[1], &pot_id)) {
+        HAL_SERIAL_PORT.println("Eixo invalido. Use X (BASE) ou Y (BRACO).");
+        return;
+    }
+
+    bool ok = set_min ? potentiometer_set_min(pot_id) : potentiometer_set_max(pot_id);
+    if (!ok) {
+        HAL_SERIAL_PORT.println("Falha ao calibrar potenciometro (task desabilitada?).");
+        return;
+    }
+
+    float percent = 0.0f;
+    if (!potentiometer_get_percent(pot_id, &percent)) {
+        percent = 0.0f;
+    }
+
+    char buffer[80];
+    snprintf(buffer, sizeof(buffer), "Pot %s %s definido. Atual: %.1f%%",
+             pot_name(pot_id), set_min ? "MIN" : "MAX", percent);
+    HAL_SERIAL_PORT.println(buffer);
+}
+
+static void handle_pot_echo_command(const String& command) {
+    String tokens[4];
+    int count = tokenize_command(command, tokens, 4);
+    if (count < 3) {
+        HAL_SERIAL_PORT.println("Uso: POTECHO <X|Y> <ON|OFF>");
+        return;
+    }
+
+    potentiometer_id_t pot_id;
+    if (!token_to_pot_id(tokens[1], &pot_id)) {
+        HAL_SERIAL_PORT.println("Eixo invalido. Use X (BASE) ou Y (BRACO).");
+        return;
+    }
+
+    bool enable = false;
+    if (tokens[2] == "ON") {
+        enable = true;
+    } else if (tokens[2] == "OFF") {
+        enable = false;
+    } else {
+        HAL_SERIAL_PORT.println("Estado invalido. Use ON ou OFF.");
+        return;
+    }
+
+    if (!potentiometer_set_echo(pot_id, enable)) {
+        HAL_SERIAL_PORT.println("Falha ao configurar echo (task desabilitada?).");
+        return;
+    }
+
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "Echo %s para pot %s",
+             enable ? "ativado" : "desativado", pot_name(pot_id));
+    HAL_SERIAL_PORT.println(buffer);
+}
 
 static void serial_print_banner() {
     HAL_SERIAL_PORT.println();
@@ -29,6 +148,9 @@ static void serial_print_banner() {
     HAL_SERIAL_PORT.println("     X -> motor base (passos)");
     HAL_SERIAL_PORT.println("     Y -> motor braco (passos)");
     HAL_SERIAL_PORT.println("     Use + ou - para sentido");
+    HAL_SERIAL_PORT.println("  POTMIN X|Y  - define posicao atual como minimo");
+    HAL_SERIAL_PORT.println("  POTMAX X|Y  - define posicao atual como maximo");
+    HAL_SERIAL_PORT.println("  POTECHO X|Y <ON|OFF> - echo percentual");
     HAL_SERIAL_PORT.println("=================================");
     HAL_SERIAL_PORT.print(SERIAL_COMMAND_PROMPT);
 }
@@ -143,6 +265,12 @@ static void process_command(String command) {
         HAL_SERIAL_PORT.println(" bytes");
         HAL_SERIAL_PORT.print("Uptime (s): ");
         HAL_SERIAL_PORT.println(millis() / 1000);
+    } else if (command.startsWith("POTMIN")) {
+        handle_pot_calibration_command(command, true);
+    } else if (command.startsWith("POTMAX")) {
+        handle_pot_calibration_command(command, false);
+    } else if (command.startsWith("POTECHO")) {
+        handle_pot_echo_command(command);
     } else {
         HAL_SERIAL_PORT.print("Comando desconhecido: ");
         HAL_SERIAL_PORT.println(command);

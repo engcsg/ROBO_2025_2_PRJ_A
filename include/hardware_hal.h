@@ -42,6 +42,14 @@
 #define HAL_STEPPER_ARM_ENABLE_ACTIVE_LOW  true
 
 // =============================================================================
+// POTENCIÔMETROS (LEITURA ADC)
+// =============================================================================
+#define HAL_POT_BASE_PIN                   GPIO_NUM_34
+#define HAL_POT_ARM_PIN                    GPIO_NUM_35
+#define HAL_POT_ADC_MIN_VALUE              0
+#define HAL_POT_ADC_MAX_VALUE              4095
+
+// =============================================================================
 // PARÂMETROS COMPARTILHADOS DE STEPPER
 // =============================================================================
 #define HAL_STEPPER_DEFAULT_PULSE_WIDTH_US 10

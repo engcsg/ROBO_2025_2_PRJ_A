@@ -2,6 +2,7 @@
 
 #include "blink_module.h"
 #include "hardware_hal.h"
+#include "potentiometer_task.h"
 #include "serial_module.h"
 #include "stepper_task.h"
 #include "system_config.h"
@@ -40,6 +41,13 @@ static void start_steppers() {
     stepper_module_start();
 }
 
+static void start_potentiometers() {
+    if (!ENABLE_TASK_POT_BASE && !ENABLE_TASK_POT_ARM) {
+        return;
+    }
+    potentiometer_module_start();
+}
+
 void setup() {
     start_serial();
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -48,6 +56,7 @@ void setup() {
 
     start_blink();
     start_steppers();
+    start_potentiometers();
 
     serial_module_log("Sistema pronto.");
 }
