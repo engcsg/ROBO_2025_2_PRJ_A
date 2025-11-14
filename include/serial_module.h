@@ -7,21 +7,20 @@
 #include "freertos/queue.h"
 #include "hardware_hal.h"
 
-// Configurações do módulo serial
-#define SERIAL_TASK_STACK_SIZE 4096
-#define SERIAL_TASK_PRIORITY 2
-#define SERIAL_QUEUE_SIZE 10
-#define MAX_MESSAGE_SIZE 128
+#define SERIAL_MAX_MESSAGE_SIZE 128
 
-// Estrutura para mensagens seriais
 typedef struct {
-    char message[MAX_MESSAGE_SIZE];
-    uint8_t length;
-} serial_message_t;
+    UBaseType_t priority;
+    uint16_t stack_size;
+    size_t log_queue_depth;
+} serial_task_config_t;
 
-// Funções públicas do módulo
-void serial_module_init(void);
-bool serial_send_message(const char* message);
-bool serial_send_message_from_isr(const char* message);
+typedef struct {
+    char message[SERIAL_MAX_MESSAGE_SIZE];
+} serial_log_message_t;
+
+bool serial_module_start(const serial_task_config_t& config);
+bool serial_module_log(const char* message);
+bool serial_module_log_from_isr(const char* message);
 
 #endif // SERIAL_MODULE_H

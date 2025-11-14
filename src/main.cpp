@@ -1,35 +1,57 @@
 #include <Arduino.h>
-#include "hardware_hal.h"
+
 #include "blink_module.h"
+#include "hardware_hal.h"
 #include "serial_module.h"
-#include "system_config.h"
 #include "stepper_task.h"
+#include "system_config.h"
+
+static void start_serial() {
+    if (!ENABLE_TASK_SERIAL) {
+        HAL_SERIAL_PORT.begin(HAL_SERIAL_BAUD_RATE, HAL_SERIAL_CONFIG, HAL_SERIAL_RX_PIN, HAL_SERIAL_TX_PIN);
+        return;
+    }
+
+    serial_task_config_t config = {
+        .priority = SERIAL_TASK_PRIORITY,
+        .stack_size = SERIAL_TASK_STACK_SIZE,
+        .log_queue_depth = SERIAL_LOG_QUEUE_LENGTH,
+    };
+    serial_module_start(config);
+}
+
+static void start_blink() {
+    if (!ENABLE_TASK_BLINK) {
+        return;
+    }
+
+    blink_task_config_t config = {
+        .period_ms = BLINK_DEFAULT_PERIOD_MS,
+        .priority = BLINK_TASK_PRIORITY,
+        .stack_size = BLINK_TASK_STACK_SIZE,
+    };
+    blink_module_start(config);
+}
+
+static void start_steppers() {
+    if (!ENABLE_TASK_STEPPER_BASE && !ENABLE_TASK_STEPPER_ARM) {
+        return;
+    }
+    stepper_module_start();
+}
 
 void setup() {
-  // Inicializar comunicação serial primeiro
-  Serial.begin(SYSTEM_BAUD_RATE);
-  
-  // Aguardar um pouco para estabilizar
-  delay(100);
-  
-  // Inicializar módulos
-  serial_module_init();  // Inicializar primeiro para ter sistema de log
-  blink_module_init();   // Inicializar módulo de blink
-  
-  // Enviar mensagem de inicialização do sistema
-  delay(200); // Aguardar módulos inicializarem
-  serial_send_message("System initialization complete!");
-  
-  // Configurar blink inicial
-  blink_config_t initial_config = {500, 500, true};
-  blink_set_config(initial_config);
+    start_serial();
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-  // Inicializar task do motor de passo
-  stepper_task_init();
+    serial_module_log("Inicializando tarefas...");
+
+    start_blink();
+    start_steppers();
+
+    serial_module_log("Sistema pronto.");
 }
 
 void loop() {
-  // O loop principal fica vazio pois as tasks do FreeRTOS gerenciam tudo
-  // Pequeno delay para evitar watchdog reset
-  delay(100);
+    vTaskDelay(pdMS_TO_TICKS(100));
 }

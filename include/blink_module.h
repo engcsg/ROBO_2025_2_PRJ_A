@@ -6,20 +6,17 @@
 #include "freertos/task.h"
 #include "hardware_hal.h"
 
-// Configurações do módulo de blink
-#define BLINK_TASK_STACK_SIZE 2048
-#define BLINK_TASK_PRIORITY 1
+#define BLINK_DEFAULT_PERIOD_MS 1000
 
-// Estrutura para configuração do blink
 typedef struct {
-    uint32_t on_time_ms;
-    uint32_t off_time_ms;
-    bool enabled;
-} blink_config_t;
+    uint32_t period_ms;
+    UBaseType_t priority;
+    uint16_t stack_size;
+} blink_task_config_t;
 
-// Funções públicas do módulo
-void blink_module_init(void);
-void blink_set_config(blink_config_t config);
-void blink_enable(bool enable);
+bool blink_module_start(const blink_task_config_t& config);
+void blink_module_stop(void);
+void blink_module_set_enabled(bool enabled);
+bool blink_module_is_running(void);
 
 #endif // BLINK_MODULE_H

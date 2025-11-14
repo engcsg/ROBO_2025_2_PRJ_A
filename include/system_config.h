@@ -3,19 +3,26 @@
 
 #include "hardware_hal.h"
 
-// Configurações gerais do sistema
-#define SYSTEM_BAUD_RATE HAL_UART0_BAUD_RATE
+#define ENABLE_TASK_SERIAL        1
+#define ENABLE_TASK_BLINK         1
+#define ENABLE_TASK_STEPPER_BASE  1
+#define ENABLE_TASK_STEPPER_ARM   1
 
-// Prioridades das tasks (quanto maior o número, maior a prioridade)
-#define PRIORITY_SERIAL 2
-#define PRIORITY_BLINK 1
+#define SERIAL_TASK_STACK_SIZE    4096
+#define SERIAL_TASK_PRIORITY      3
+#define SERIAL_LOG_QUEUE_LENGTH   16
 
-// Tamanhos de stack para cada task
-#define STACK_SIZE_SERIAL 4096
-#define STACK_SIZE_BLINK 2048
+#define BLINK_TASK_STACK_SIZE     2048
+#define BLINK_TASK_PRIORITY       1
 
-// Timeouts e delays
-#define SERIAL_TIMEOUT_MS 100
-#define DEFAULT_BLINK_DELAY_MS 500
+#define STEPPER_TASK_STACK_SIZE   4096
+#define STEPPER_TASK_PRIORITY     2
+#define STEPPER_QUEUE_LENGTH      8
+#define STEPPER_COMPLETION_QUEUE  8
+
+#define STEPPER_DEFAULT_RELEASE   true
+#define STEPPER_DEFAULT_USE_RAMP  true
+
+#define SERIAL_COMMAND_PROMPT     "> "
 
 #endif // SYSTEM_CONFIG_H

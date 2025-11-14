@@ -2,23 +2,55 @@
 #define STEPPER_TASK_H
 
 #include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "hardware_hal.h"
 
-// Configurações do driver de passo - ajuste conforme seu hardware
-#define STEPPER_PIN_STEP GPIO_NUM_13
-#define STEPPER_PIN_DIR GPIO_NUM_12
-#define STEPPER_PIN_ENABLE GPIO_NUM_14
+typedef enum {
+    STEPPER_MOTOR_BASE = 0,
+    STEPPER_MOTOR_ARM,
+    STEPPER_MOTOR_COUNT
+} stepper_motor_id_t;
 
-// Se o pino ENABLE é ativo em nível baixo (LOW), deixe 1; se ativo em HIGH, defina 0
-#define STEPPER_ENABLE_ACTIVE_LOW 1
+typedef enum {
+    STEPPER_DIRECTION_CW = 0,
+    STEPPER_DIRECTION_CCW
+} stepper_direction_t;
 
-// Pulsos e temporizações (ajuste velocidade aqui)
-#define STEPPER_PULSE_WIDTH_US 10      // duração do pulso (microsegundos)
-#define STEPPER_STEP_DELAY_US 1000    // intervalo entre pulsos (microsegundos)
+typedef struct {
+    uint32_t steps;
+    stepper_direction_t direction;
+    bool use_ramp;
+    bool release_after_move;
+    bool notify_controller;
+} stepper_command_t;
 
-// Número de passos a mover em cada sentido
-#define STEPPER_STEPS_PER_MOVE 200
+typedef struct {
+    stepper_motor_id_t motor_id;
+    gpio_num_t step_pin;
+    gpio_num_t dir_pin;
+    gpio_num_t enable_pin;
+    bool enable_active_low;
+    bool invert_direction;
+    const char* task_name;
+    UBaseType_t priority;
+    uint16_t stack_size;
+    size_t queue_depth;
+    uint32_t pulse_width_us;
+    uint32_t step_delay_us;
+} stepper_task_config_t;
 
-// Inicializa e inicia a task do stepper; chame no setup()
-void stepper_task_init(void);
+typedef struct {
+    stepper_motor_id_t motor_id;
+    stepper_command_t command;
+    bool completed;
+} stepper_event_t;
+
+bool stepper_module_start(void);
+bool stepper_submit_command(stepper_motor_id_t motor_id,
+                            const stepper_command_t& command,
+                            TickType_t timeout_ticks);
+QueueHandle_t stepper_event_queue(void);
 
 #endif // STEPPER_TASK_H

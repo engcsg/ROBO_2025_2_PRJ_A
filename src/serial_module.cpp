@@ -1,142 +1,264 @@
 #include "serial_module.h"
-#include "blink_module.h"
 
-// Variáveis privadas do módulo
-static TaskHandle_t serial_task_handle = NULL;
-static QueueHandle_t serial_queue = NULL;
+#include "stepper_task.h"
+#include "system_config.h"
 
-// Task para processar mensagens seriais
-static void serial_task(void *pvParameters) {
-    (void) pvParameters;
-    
-    serial_message_t message;
-    
-    // Inicializar comunicação serial
-    Serial.begin(115200);
-    
-    // Aguardar um pouco para estabilizar
-    vTaskDelay(pdMS_TO_TICKS(100));
-    
-    Serial.println("=================================");
-    Serial.println("Sistema de Módulos FreeRTOS");
-    Serial.println("=================================");
-    Serial.println("Serial module initialized");
-    Serial.println("Commands:");
-    Serial.println("  'on' - Enable blink");
-    Serial.println("  'off' - Disable blink");
-    Serial.println("  'fast' - Fast blink (200ms)");
-    Serial.println("  'slow' - Slow blink (1000ms)");
-    Serial.println("  'status' - Show system status");
-    Serial.println("=================================");
-    
-    while (1) {
-        // Processar mensagens da fila
-        if (xQueueReceive(serial_queue, &message, pdMS_TO_TICKS(10)) == pdPASS) {
-            Serial.print("[");
-            Serial.print(millis());
-            Serial.print("] ");
-            Serial.println(message.message);
+#include <cstring>
+#include <ctype.h>
+#include <stdlib.h>
+
+static TaskHandle_t serial_task_handle = nullptr;
+static QueueHandle_t serial_log_queue = nullptr;
+static serial_task_config_t serial_config = {
+    .priority = SERIAL_TASK_PRIORITY,
+    .stack_size = SERIAL_TASK_STACK_SIZE,
+    .log_queue_depth = SERIAL_LOG_QUEUE_LENGTH,
+};
+
+static QueueHandle_t cached_stepper_event_queue = nullptr;
+
+static void serial_print_banner() {
+    HAL_SERIAL_PORT.println();
+    HAL_SERIAL_PORT.println("=================================");
+    HAL_SERIAL_PORT.println("     ESP32 FreeRTOS Controller    ");
+    HAL_SERIAL_PORT.println("=================================");
+    HAL_SERIAL_PORT.println("Comandos:");
+    HAL_SERIAL_PORT.println("  HELP      - Lista comandos");
+    HAL_SERIAL_PORT.println("  STATUS    - Mostra status");
+    HAL_SERIAL_PORT.println("  G01 Xnnn Ymmm");
+    HAL_SERIAL_PORT.println("     X -> motor base (passos)");
+    HAL_SERIAL_PORT.println("     Y -> motor braco (passos)");
+    HAL_SERIAL_PORT.println("     Use + ou - para sentido");
+    HAL_SERIAL_PORT.println("=================================");
+    HAL_SERIAL_PORT.print(SERIAL_COMMAND_PROMPT);
+}
+
+static bool parse_axis_value(const String& line, char axis, bool* has_value, int32_t* result) {
+    int index = line.indexOf(axis);
+    if (index < 0) {
+        *has_value = false;
+        *result = 0;
+        return true;
+    }
+
+    int sign = 1;
+    index++;
+
+    if (index < line.length()) {
+        if (line[index] == '+') {
+            sign = 1;
+            index++;
+        } else if (line[index] == '-') {
+            sign = -1;
+            index++;
         }
-        
-        // Processar comandos recebidos via serial
-        if (Serial.available()) {
-            String command = Serial.readStringUntil('\n');
-            command.trim();
-            command.toLowerCase();
-            
-            Serial.print("Received command: ");
-            Serial.println(command);
-            
-            // Processar comandos (aqui você pode adicionar mais comandos)
-            if (command == "status") {
-                Serial.println("System Status:");
-                Serial.print("Free heap: ");
-                Serial.print(ESP.getFreeHeap());
-                Serial.println(" bytes");
-                Serial.print("Uptime: ");
-                Serial.print(millis() / 1000);
-                Serial.println(" seconds");
-            } else if (command == "help") {
-                Serial.println("Available commands:");
-                Serial.println("  'on', 'off', 'fast', 'slow', 'status', 'help'");
-            } else if (command == "on") {
-                blink_enable(true);
-            } else if (command == "off") {
-                blink_enable(false);
-            } else if (command == "fast") {
-                blink_config_t fast_config = {200, 200, true};
-                blink_set_config(fast_config);
-            } else if (command == "slow") {
-                blink_config_t slow_config = {1000, 1000, true};
-                blink_set_config(slow_config);
+    }
+
+    int start = index;
+    while (index < line.length() && isdigit(line[index])) {
+        index++;
+    }
+
+    if (start == index) {
+        return false;
+    }
+
+    String number = line.substring(start, index);
+    *result = sign * number.toInt();
+    *has_value = true;
+    return true;
+}
+
+static bool enqueue_stepper_move(stepper_motor_id_t motor_id, int32_t signed_steps) {
+    if (signed_steps == 0) {
+        return true;
+    }
+
+    stepper_command_t command;
+    command.steps = static_cast<uint32_t>(abs(signed_steps));
+    command.direction = signed_steps >= 0 ? STEPPER_DIRECTION_CW : STEPPER_DIRECTION_CCW;
+    command.use_ramp = STEPPER_DEFAULT_USE_RAMP;
+    command.release_after_move = STEPPER_DEFAULT_RELEASE;
+    command.notify_controller = true;
+
+    if (!stepper_submit_command(motor_id, command, pdMS_TO_TICKS(100))) {
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "Fila cheia para motor %d", motor_id);
+        serial_module_log(buffer);
+        return false;
+    }
+
+    return true;
+}
+
+static void process_g01(const String& line) {
+    bool has_x = false;
+    bool has_y = false;
+    int32_t x_steps = 0;
+    int32_t y_steps = 0;
+
+    if (!parse_axis_value(line, 'X', &has_x, &x_steps) ||
+        !parse_axis_value(line, 'Y', &has_y, &y_steps)) {
+        HAL_SERIAL_PORT.println("Erro: formato invalido. Use G01 Xnnn Ymmm");
+        return;
+    }
+
+    if (!has_x && !has_y) {
+        HAL_SERIAL_PORT.println("Nenhum eixo informado.");
+        return;
+    }
+
+    bool ok = true;
+    if (has_x) {
+        ok &= enqueue_stepper_move(STEPPER_MOTOR_BASE, x_steps);
+    }
+    if (has_y) {
+        ok &= enqueue_stepper_move(STEPPER_MOTOR_ARM, y_steps);
+    }
+
+    if (ok) {
+        HAL_SERIAL_PORT.println("Movimento enfileirado.");
+    } else {
+        HAL_SERIAL_PORT.println("Falha ao enfileirar movimento.");
+    }
+}
+
+static void process_command(String command) {
+    command.trim();
+    command.toUpperCase();
+
+    if (command.isEmpty()) {
+        HAL_SERIAL_PORT.print(SERIAL_COMMAND_PROMPT);
+        return;
+    }
+
+    if (command.startsWith("G01")) {
+        process_g01(command);
+    } else if (command == "HELP") {
+        serial_print_banner();
+        return;
+    } else if (command == "STATUS") {
+        HAL_SERIAL_PORT.print("Heap livre: ");
+        HAL_SERIAL_PORT.print(ESP.getFreeHeap());
+        HAL_SERIAL_PORT.println(" bytes");
+        HAL_SERIAL_PORT.print("Uptime (s): ");
+        HAL_SERIAL_PORT.println(millis() / 1000);
+    } else {
+        HAL_SERIAL_PORT.print("Comando desconhecido: ");
+        HAL_SERIAL_PORT.println(command);
+    }
+
+    HAL_SERIAL_PORT.print(SERIAL_COMMAND_PROMPT);
+}
+
+static void handle_stepper_events() {
+    if (cached_stepper_event_queue == nullptr) {
+        cached_stepper_event_queue = stepper_event_queue();
+    }
+
+    if (cached_stepper_event_queue == nullptr) {
+        return;
+    }
+
+    stepper_event_t event;
+    while (xQueueReceive(cached_stepper_event_queue, &event, 0) == pdPASS) {
+        const char* motor_name = event.motor_id == STEPPER_MOTOR_BASE ? "BASE" : "BRACO";
+        HAL_SERIAL_PORT.print("Stepper ");
+        HAL_SERIAL_PORT.print(motor_name);
+        HAL_SERIAL_PORT.print(" concluido: ");
+        HAL_SERIAL_PORT.print(event.command.steps);
+        HAL_SERIAL_PORT.println(" passos.");
+    }
+}
+
+static void serial_task(void* pvParameters) {
+    (void) pvParameters;
+
+    HAL_SERIAL_PORT.begin(
+        HAL_SERIAL_BAUD_RATE,
+        HAL_SERIAL_CONFIG,
+        HAL_SERIAL_RX_PIN,
+        HAL_SERIAL_TX_PIN);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    serial_print_banner();
+
+    String rx_buffer;
+    rx_buffer.reserve(64);
+
+    while (true) {
+        handle_stepper_events();
+
+        serial_log_message_t log_message;
+        if (serial_log_queue != nullptr &&
+            xQueueReceive(serial_log_queue, &log_message, pdMS_TO_TICKS(10)) == pdPASS) {
+            HAL_SERIAL_PORT.println(log_message.message);
+        }
+
+        while (HAL_SERIAL_PORT.available()) {
+            char ch = static_cast<char>(HAL_SERIAL_PORT.read());
+            if (ch == '\r') {
+                continue;
+            }
+
+            if (ch == '\n') {
+                process_command(rx_buffer);
+                rx_buffer = "";
             } else {
-                // Ecoar comando não reconhecido
-                String response = "Unknown command: " + command;
-                Serial.println(response);
+                rx_buffer += ch;
             }
         }
-        
-        // Pequeno delay para não sobrecarregar a CPU
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
-// Inicializar o módulo serial
-void serial_module_init(void) {
-    // Criar fila para mensagens
-    serial_queue = xQueueCreate(SERIAL_QUEUE_SIZE, sizeof(serial_message_t));
-    
-    if (serial_queue == NULL) {
-        Serial.println("ERROR: Failed to create serial queue");
-        return;
+bool serial_module_start(const serial_task_config_t& config) {
+    if (serial_task_handle != nullptr) {
+        return true;
     }
-    
-    // Criar task serial
+
+    serial_config = config;
+    serial_log_queue = xQueueCreate(serial_config.log_queue_depth, sizeof(serial_log_message_t));
+    if (serial_log_queue == nullptr) {
+        return false;
+    }
+
     BaseType_t result = xTaskCreate(
-        serial_task,                // Função da task
-        "SerialTask",               // Nome da task
-        SERIAL_TASK_STACK_SIZE,     // Tamanho da stack
-        NULL,                       // Parâmetros
-        SERIAL_TASK_PRIORITY,       // Prioridade
-        &serial_task_handle         // Handle da task
-    );
-    
-    if (result != pdPASS) {
-        Serial.println("ERROR: Failed to create serial task");
-    }
+        serial_task,
+        "SerialTask",
+        serial_config.stack_size,
+        nullptr,
+        serial_config.priority,
+        &serial_task_handle);
+
+    return result == pdPASS;
 }
 
-// Enviar mensagem via serial (de outras tasks)
-bool serial_send_message(const char* message) {
-    if (serial_queue == NULL) {
+bool serial_module_log(const char* message) {
+    if (serial_log_queue == nullptr || message == nullptr) {
         return false;
     }
-    
-    serial_message_t msg;
-    strncpy(msg.message, message, MAX_MESSAGE_SIZE - 1);
-    msg.message[MAX_MESSAGE_SIZE - 1] = '\0';
-    msg.length = strlen(msg.message);
-    
-    return xQueueSend(serial_queue, &msg, pdMS_TO_TICKS(100)) == pdPASS;
+
+    serial_log_message_t log_message;
+    strncpy(log_message.message, message, SERIAL_MAX_MESSAGE_SIZE - 1);
+    log_message.message[SERIAL_MAX_MESSAGE_SIZE - 1] = '\0';
+    return xQueueSend(serial_log_queue, &log_message, 0) == pdPASS;
 }
 
-// Enviar mensagem via serial (de ISR)
-bool serial_send_message_from_isr(const char* message) {
-    if (serial_queue == NULL) {
+bool serial_module_log_from_isr(const char* message) {
+    if (serial_log_queue == nullptr || message == nullptr) {
         return false;
     }
-    
-    serial_message_t msg;
-    strncpy(msg.message, message, MAX_MESSAGE_SIZE - 1);
-    msg.message[MAX_MESSAGE_SIZE - 1] = '\0';
-    msg.length = strlen(msg.message);
-    
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    BaseType_t result = xQueueSendFromISR(serial_queue, &msg, &xHigherPriorityTaskWoken);
-    
-    if (xHigherPriorityTaskWoken) {
+
+    serial_log_message_t log_message;
+    strncpy(log_message.message, message, SERIAL_MAX_MESSAGE_SIZE - 1);
+    log_message.message[SERIAL_MAX_MESSAGE_SIZE - 1] = '\0';
+
+    BaseType_t higher_priority_task_woken = pdFALSE;
+    BaseType_t status = xQueueSendFromISR(serial_log_queue, &log_message, &higher_priority_task_woken);
+    if (higher_priority_task_woken) {
         portYIELD_FROM_ISR();
     }
-    
-    return result == pdPASS;
+    return status == pdPASS;
 }
