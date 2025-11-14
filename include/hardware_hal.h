@@ -36,16 +36,16 @@
 // =============================================================================
 // DRIVERS TB6600 - MOTOR BRAÇO
 // =============================================================================
-#define HAL_STEPPER_ARM_STEP_PIN           GPIO_NUM_27
-#define HAL_STEPPER_ARM_DIR_PIN            GPIO_NUM_26
-#define HAL_STEPPER_ARM_ENABLE_PIN         GPIO_NUM_25
+#define HAL_STEPPER_ARM_STEP_PIN           GPIO_NUM_27  // D27
+#define HAL_STEPPER_ARM_DIR_PIN            GPIO_NUM_26  // D26
+#define HAL_STEPPER_ARM_ENABLE_PIN         GPIO_NUM_25  // D25
 #define HAL_STEPPER_ARM_ENABLE_ACTIVE_LOW  true
 
 // =============================================================================
 // POTENCIÔMETROS (LEITURA ADC)
 // =============================================================================
-#define HAL_POT_BASE_PIN                   GPIO_NUM_34
-#define HAL_POT_ARM_PIN                    GPIO_NUM_35
+#define HAL_POT_BASE_PIN                   GPIO_NUM_34  // ADC1_6   - D34
+#define HAL_POT_ARM_PIN                    GPIO_NUM_35  // ADC1_7   - D35
 #define HAL_POT_ADC_MIN_VALUE              0
 #define HAL_POT_ADC_MAX_VALUE              4095
 

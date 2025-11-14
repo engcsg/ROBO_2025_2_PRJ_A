@@ -28,6 +28,8 @@
 #define POT_TASK_STACK_SIZE       2048
 #define POT_TASK_PRIORITY         1
 #define POT_SAMPLE_DELAY_MS       50
+#define POT_ECHO_MIN_INTERVAL_MS  1000
+#define POT_ECHO_MIN_DELTA_PERCENT 1.0f
 
 #define SERIAL_COMMAND_PROMPT     "> "
 

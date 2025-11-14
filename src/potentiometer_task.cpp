@@ -11,10 +11,13 @@ typedef struct {
     TaskHandle_t task_handle;
     bool enabled;
     bool echo_enabled;
+    bool report_pending;
     int current_raw;
     float current_percent;
     int min_raw;
     int max_raw;
+    float last_report_percent;
+    TickType_t last_report_tick;
 } potentiometer_context_t;
 
 static potentiometer_context_t pot_contexts[POTENTIOMETER_COUNT] = {};
@@ -60,8 +63,6 @@ static float calculate_percent(int raw_value, int min_raw, int max_raw) {
 static void potentiometer_task(void* pvParameters) {
     auto* context = static_cast<potentiometer_context_t*>(pvParameters);
     const TickType_t delay_ticks = pdMS_TO_TICKS(context->config.sample_period_ms);
-    float last_reported = -1.0f;
-    TickType_t last_report_tick = 0;
 
     char start_msg[48];
     snprintf(start_msg, sizeof(start_msg), "Pot %s task iniciada", context->config.name);
@@ -72,24 +73,33 @@ static void potentiometer_task(void* pvParameters) {
 
         float percent = 0.0f;
         bool echo_enabled = false;
+        bool report_pending = false;
+        float last_report_percent = 0.0f;
+        TickType_t last_report_tick = 0;
         portENTER_CRITICAL(&pot_lock);
         context->current_raw = raw_value;
         percent = calculate_percent(raw_value, context->min_raw, context->max_raw);
         context->current_percent = percent;
         echo_enabled = context->echo_enabled;
+        report_pending = context->report_pending;
+        last_report_percent = context->last_report_percent;
+        last_report_tick = context->last_report_tick;
         portEXIT_CRITICAL(&pot_lock);
 
         if (echo_enabled) {
             TickType_t now = xTaskGetTickCount();
-            bool should_report =
-                fabsf(percent - last_reported) >= 1.0f ||
-                (now - last_report_tick) >= pdMS_TO_TICKS(500);
+            bool value_changed = fabsf(percent - last_report_percent) >= POT_ECHO_MIN_DELTA_PERCENT;
+            bool enough_time = (now - last_report_tick) >= pdMS_TO_TICKS(POT_ECHO_MIN_INTERVAL_MS);
+            bool should_report = report_pending || (value_changed && enough_time);
             if (should_report) {
                 char msg[64];
                 snprintf(msg, sizeof(msg), "Pot %s: %.1f%%", context->config.name, percent);
                 serial_module_log(msg);
-                last_reported = percent;
-                last_report_tick = now;
+                portENTER_CRITICAL(&pot_lock);
+                context->report_pending = false;
+                context->last_report_percent = percent;
+                context->last_report_tick = now;
+                portEXIT_CRITICAL(&pot_lock);
             }
         }
 
@@ -102,10 +112,13 @@ static bool initialize_context(potentiometer_context_t& context,
     context.config = config;
     context.enabled = true;
     context.echo_enabled = false;
+    context.report_pending = false;
     context.current_raw = 0;
     context.current_percent = 0.0f;
     context.min_raw = HAL_POT_ADC_MIN_VALUE;
     context.max_raw = HAL_POT_ADC_MAX_VALUE;
+    context.last_report_percent = 0.0f;
+    context.last_report_tick = 0;
 
     BaseType_t result = xTaskCreate(
         potentiometer_task,
@@ -208,6 +221,11 @@ bool potentiometer_set_echo(potentiometer_id_t pot_id, bool enabled) {
 
     portENTER_CRITICAL(&pot_lock);
     context.echo_enabled = enabled;
+    if (enabled) {
+        context.report_pending = true;
+    } else {
+        context.report_pending = false;
+    }
     portEXIT_CRITICAL(&pot_lock);
     return true;
 }

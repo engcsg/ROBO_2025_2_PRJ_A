@@ -105,13 +105,7 @@ static void handle_pot_echo_command(const String& command) {
     String tokens[4];
     int count = tokenize_command(command, tokens, 4);
     if (count < 3) {
-        HAL_SERIAL_PORT.println("Uso: POTECHO <X|Y> <ON|OFF>");
-        return;
-    }
-
-    potentiometer_id_t pot_id;
-    if (!token_to_pot_id(tokens[1], &pot_id)) {
-        HAL_SERIAL_PORT.println("Eixo invalido. Use X (BASE) ou Y (BRACO).");
+        HAL_SERIAL_PORT.println("Uso: POTECHO <X|Y|ALL> <ON|OFF>");
         return;
     }
 
@@ -122,6 +116,26 @@ static void handle_pot_echo_command(const String& command) {
         enable = false;
     } else {
         HAL_SERIAL_PORT.println("Estado invalido. Use ON ou OFF.");
+        return;
+    }
+
+    if (tokens[1] == "ALL") {
+        bool ok_base = potentiometer_set_echo(POTENTIOMETER_BASE, enable);
+        bool ok_arm = potentiometer_set_echo(POTENTIOMETER_ARM, enable);
+        if (!ok_base && !ok_arm) {
+            HAL_SERIAL_PORT.println("Falha ao configurar echo (tasks desabilitadas?).");
+            return;
+        }
+
+        HAL_SERIAL_PORT.print("Echo ");
+        HAL_SERIAL_PORT.print(enable ? "ativado" : "desativado");
+        HAL_SERIAL_PORT.println(" para todos os pots.");
+        return;
+    }
+
+    potentiometer_id_t pot_id;
+    if (!token_to_pot_id(tokens[1], &pot_id)) {
+        HAL_SERIAL_PORT.println("Eixo invalido. Use X (BASE) ou Y (BRACO).");
         return;
     }
 
@@ -150,7 +164,7 @@ static void serial_print_banner() {
     HAL_SERIAL_PORT.println("     Use + ou - para sentido");
     HAL_SERIAL_PORT.println("  POTMIN X|Y  - define posicao atual como minimo");
     HAL_SERIAL_PORT.println("  POTMAX X|Y  - define posicao atual como maximo");
-    HAL_SERIAL_PORT.println("  POTECHO X|Y <ON|OFF> - echo percentual");
+    HAL_SERIAL_PORT.println("  POTECHO X|Y|ALL <ON|OFF> - echo percentual");
     HAL_SERIAL_PORT.println("=================================");
     HAL_SERIAL_PORT.print(SERIAL_COMMAND_PROMPT);
 }
@@ -313,6 +327,7 @@ static void serial_task(void* pvParameters) {
 
     String rx_buffer;
     rx_buffer.reserve(64);
+    bool last_char_was_cr = false;
 
     while (true) {
         handle_stepper_events();
@@ -325,14 +340,31 @@ static void serial_task(void* pvParameters) {
 
         while (HAL_SERIAL_PORT.available()) {
             char ch = static_cast<char>(HAL_SERIAL_PORT.read());
-            if (ch == '\r') {
+
+            if (ch == '\r' || ch == '\n') {
+                if (ch == '\n' && last_char_was_cr) {
+                    last_char_was_cr = false;
+                    continue;
+                }
+                last_char_was_cr = (ch == '\r');
+                HAL_SERIAL_PORT.print("\r\n");
+                process_command(rx_buffer);
+                rx_buffer = "";
                 continue;
             }
 
-            if (ch == '\n') {
-                process_command(rx_buffer);
-                rx_buffer = "";
-            } else {
+            if (ch == 0x08 || ch == 0x7F) {  // backspace/delete
+                last_char_was_cr = false;
+                if (rx_buffer.length() > 0) {
+                    rx_buffer.remove(rx_buffer.length() - 1);
+                    HAL_SERIAL_PORT.print("\b \b");
+                }
+                continue;
+            }
+
+            if (isprint(static_cast<unsigned char>(ch))) {
+                last_char_was_cr = false;
+                HAL_SERIAL_PORT.write(ch);
                 rx_buffer += ch;
             }
         }
