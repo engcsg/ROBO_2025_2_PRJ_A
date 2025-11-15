@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "blink_module.h"
+#include "controller_task.h"
 #include "hardware_hal.h"
 #include "potentiometer_task.h"
 #include "serial_module.h"
@@ -48,6 +49,13 @@ static void start_potentiometers() {
     potentiometer_module_start();
 }
 
+static void start_controllers() {
+    if (!ENABLE_TASK_CONTROLLER_BASE && !ENABLE_TASK_CONTROLLER_ARM) {
+        return;
+    }
+    controller_module_start();
+}
+
 void setup() {
     start_serial();
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -57,6 +65,7 @@ void setup() {
     start_blink();
     start_steppers();
     start_potentiometers();
+    start_controllers();
 
     serial_module_log("Sistema pronto.");
 }

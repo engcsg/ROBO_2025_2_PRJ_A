@@ -1,5 +1,6 @@
 #include "serial_module.h"
 
+#include "controller_task.h"
 #include "potentiometer_task.h"
 #include "stepper_task.h"
 #include "system_config.h"
@@ -68,6 +69,41 @@ static bool token_to_pot_id(const String& token, potentiometer_id_t* out_id) {
     }
 
     return false;
+}
+
+static bool parse_axis_float_value(const String& line, char axis, bool* has_value, float* result) {
+    int index = line.indexOf(axis);
+    if (index < 0) {
+        *has_value = false;
+        *result = 0.0f;
+        return true;
+    }
+
+    index++;
+    int start = index;
+    if (index < line.length() && (line[index] == '+' || line[index] == '-')) {
+        index++;
+    }
+
+    bool has_digit = false;
+    while (index < line.length()) {
+        char ch = line[index];
+        if (isdigit(ch) || ch == '.') {
+            index++;
+            has_digit = true;
+        } else {
+            break;
+        }
+    }
+
+    if (!has_digit) {
+        return false;
+    }
+
+    String number = line.substring(start, index);
+    *result = number.toFloat();
+    *has_value = true;
+    return true;
 }
 
 static void handle_pot_calibration_command(const String& command, bool set_min) {
@@ -150,6 +186,159 @@ static void handle_pot_echo_command(const String& command) {
     HAL_SERIAL_PORT.println(buffer);
 }
 
+static void handle_ctrl_enable_command(const String& command) {
+    String tokens[3];
+    int count = tokenize_command(command, tokens, 3);
+    if (count < 2) {
+        HAL_SERIAL_PORT.println("Uso: CTRL <ON|OFF>");
+        return;
+    }
+
+    if (tokens[1] == "ON") {
+        controller_set_enabled(true);
+        HAL_SERIAL_PORT.println("Controle ligado.");
+    } else if (tokens[1] == "OFF") {
+        controller_set_enabled(false);
+        HAL_SERIAL_PORT.println("Controle desligado.");
+    } else {
+        HAL_SERIAL_PORT.println("Estado invalido. Use ON ou OFF.");
+    }
+}
+
+static bool extract_axis_value_from_token(const String& token, char* axis, float* value) {
+    if (token.length() < 2) {
+        return false;
+    }
+    *axis = token[0];
+    String number = token.substring(1);
+    if (number.length() == 0) {
+        return false;
+    }
+    *value = number.toFloat();
+    return true;
+}
+
+static void handle_ctrl_setpoint_command(const String& command) {
+    String tokens[3];
+    int count = tokenize_command(command, tokens, 3);
+    if (count < 2) {
+        HAL_SERIAL_PORT.println("Uso: CTRLSP Xnnn ou CTRLSP Ynnn");
+        return;
+    }
+
+    char axis = '\0';
+    float value = 0.0f;
+
+    if (count == 2) {
+        if (!extract_axis_value_from_token(tokens[1], &axis, &value)) {
+            HAL_SERIAL_PORT.println("Formato invalido. Use CTRLSP Xnnn");
+            return;
+        }
+    } else {
+        axis = tokens[1][0];
+        value = tokens[2].toFloat();
+    }
+
+    potentiometer_id_t pot_id;
+    if (!token_to_pot_id(String(axis), &pot_id)) {
+        HAL_SERIAL_PORT.println("Eixo invalido. Use X (BASE) ou Y (BRACO).");
+        return;
+    }
+
+    if (!controller_set_setpoint(pot_id, value)) {
+        HAL_SERIAL_PORT.println("Falha ao definir setpoint.");
+        return;
+    }
+
+    HAL_SERIAL_PORT.print("Setpoint do eixo ");
+    HAL_SERIAL_PORT.print(pot_name(pot_id));
+    HAL_SERIAL_PORT.print(" definido para ");
+    HAL_SERIAL_PORT.print(value, 1);
+    HAL_SERIAL_PORT.println("%");
+}
+
+static void handle_ctrl_pose_echo_command(const String& command) {
+    String tokens[4];
+    int count = tokenize_command(command, tokens, 4);
+    if (count < 3) {
+        HAL_SERIAL_PORT.println("Uso: CTRLPOSECHO <X|Y|ALL> <ON|OFF>");
+        return;
+    }
+
+    bool enable = false;
+    if (tokens[2] == "ON") {
+        enable = true;
+    } else if (tokens[2] == "OFF") {
+        enable = false;
+    } else {
+        HAL_SERIAL_PORT.println("Estado invalido. Use ON ou OFF.");
+        return;
+    }
+
+    if (tokens[1] == "ALL") {
+        if (!controller_set_pose_echo_all(enable)) {
+            HAL_SERIAL_PORT.println("Falha ao configurar echo.");
+            return;
+        }
+        HAL_SERIAL_PORT.print("Echo de posicao ");
+        HAL_SERIAL_PORT.print(enable ? "ativado" : "desativado");
+        HAL_SERIAL_PORT.println(" para todos os eixos.");
+        return;
+    }
+
+    potentiometer_id_t pot_id;
+    if (!token_to_pot_id(tokens[1], &pot_id)) {
+        HAL_SERIAL_PORT.println("Eixo invalido. Use X (BASE) ou Y (BRACO).");
+        return;
+    }
+
+    if (!controller_set_pose_echo(pot_id, enable)) {
+        HAL_SERIAL_PORT.println("Falha ao configurar echo.");
+        return;
+    }
+
+    HAL_SERIAL_PORT.print("Echo de posicao ");
+    HAL_SERIAL_PORT.print(enable ? "ativado" : "desativado");
+    HAL_SERIAL_PORT.print(" para ");
+    HAL_SERIAL_PORT.println(pot_name(pot_id));
+}
+
+static void handle_ctrl_go_command(const String& command) {
+    bool has_x = false;
+    bool has_y = false;
+    float x_value = 0.0f;
+    float y_value = 0.0f;
+
+    if (!parse_axis_float_value(command, 'X', &has_x, &x_value) ||
+        !parse_axis_float_value(command, 'Y', &has_y, &y_value)) {
+        HAL_SERIAL_PORT.println("Formato invalido. Use CTRLGO Xnnn Ymmm");
+        return;
+    }
+
+    if (!has_x && !has_y) {
+        HAL_SERIAL_PORT.println("Nenhum eixo informado.");
+        return;
+    }
+
+    if (!controller_set_setpoints(has_x, x_value, has_y, y_value)) {
+        HAL_SERIAL_PORT.println("Falha ao definir setpoints.");
+        return;
+    }
+
+    HAL_SERIAL_PORT.print("Setpoints atualizados.");
+    if (has_x) {
+        HAL_SERIAL_PORT.print(" X=");
+        HAL_SERIAL_PORT.print(x_value, 1);
+        HAL_SERIAL_PORT.print("%");
+    }
+    if (has_y) {
+        HAL_SERIAL_PORT.print(" Y=");
+        HAL_SERIAL_PORT.print(y_value, 1);
+        HAL_SERIAL_PORT.print("%");
+    }
+    HAL_SERIAL_PORT.println();
+}
+
 static void serial_print_banner() {
     HAL_SERIAL_PORT.println();
     HAL_SERIAL_PORT.println("=================================");
@@ -165,6 +354,10 @@ static void serial_print_banner() {
     HAL_SERIAL_PORT.println("  POTMIN X|Y  - define posicao atual como minimo");
     HAL_SERIAL_PORT.println("  POTMAX X|Y  - define posicao atual como maximo");
     HAL_SERIAL_PORT.println("  POTECHO X|Y|ALL <ON|OFF> - echo percentual");
+    HAL_SERIAL_PORT.println("  CTRL <ON|OFF> - liga/desliga controle automatico");
+    HAL_SERIAL_PORT.println("  CTRLSP Xnnn / Ynnn - define setpoint (%)");
+    HAL_SERIAL_PORT.println("  CTRLGO Xnnn Ymmm - define SP de ambos os eixos");
+    HAL_SERIAL_PORT.println("  CTRLPOSECHO X|Y|ALL <ON|OFF> - echo da posicao");
     HAL_SERIAL_PORT.println("=================================");
     HAL_SERIAL_PORT.print(SERIAL_COMMAND_PROMPT);
 }
@@ -285,6 +478,14 @@ static void process_command(String command) {
         handle_pot_calibration_command(command, false);
     } else if (command.startsWith("POTECHO")) {
         handle_pot_echo_command(command);
+    } else if (command.startsWith("CTRLGO")) {
+        handle_ctrl_go_command(command);
+    } else if (command.startsWith("CTRLSP")) {
+        handle_ctrl_setpoint_command(command);
+    } else if (command.startsWith("CTRLPOSECHO")) {
+        handle_ctrl_pose_echo_command(command);
+    } else if (command.startsWith("CTRL")) {
+        handle_ctrl_enable_command(command);
     } else {
         HAL_SERIAL_PORT.print("Comando desconhecido: ");
         HAL_SERIAL_PORT.println(command);

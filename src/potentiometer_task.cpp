@@ -9,6 +9,7 @@
 typedef struct {
     potentiometer_task_config_t config;
     TaskHandle_t task_handle;
+    QueueHandle_t sample_queue;
     bool enabled;
     bool echo_enabled;
     bool report_pending;
@@ -76,6 +77,7 @@ static void potentiometer_task(void* pvParameters) {
         bool report_pending = false;
         float last_report_percent = 0.0f;
         TickType_t last_report_tick = 0;
+        QueueHandle_t sample_queue = nullptr;
         portENTER_CRITICAL(&pot_lock);
         context->current_raw = raw_value;
         percent = calculate_percent(raw_value, context->min_raw, context->max_raw);
@@ -84,7 +86,18 @@ static void potentiometer_task(void* pvParameters) {
         report_pending = context->report_pending;
         last_report_percent = context->last_report_percent;
         last_report_tick = context->last_report_tick;
+        sample_queue = context->sample_queue;
         portEXIT_CRITICAL(&pot_lock);
+
+        if (sample_queue != nullptr) {
+            potentiometer_sample_t sample = {
+                .pot_id = context->config.pot_id,
+                .raw_value = raw_value,
+                .percent = percent,
+                .timestamp = xTaskGetTickCount(),
+            };
+            xQueueOverwrite(sample_queue, &sample);
+        }
 
         if (echo_enabled) {
             TickType_t now = xTaskGetTickCount();
@@ -163,6 +176,12 @@ bool potentiometer_module_start(void) {
             continue;
         }
 
+        pot_contexts[i].sample_queue = xQueueCreate(
+            POT_SAMPLE_QUEUE_LENGTH, sizeof(potentiometer_sample_t));
+        if (pot_contexts[i].sample_queue == nullptr) {
+            return false;
+        }
+
         if (!initialize_context(pot_contexts[i], default_pot_configs[i])) {
             return false;
         }
@@ -228,6 +247,13 @@ bool potentiometer_set_echo(potentiometer_id_t pot_id, bool enabled) {
     }
     portEXIT_CRITICAL(&pot_lock);
     return true;
+}
+
+QueueHandle_t potentiometer_sample_queue(potentiometer_id_t pot_id) {
+    if (pot_id < 0 || pot_id >= POTENTIOMETER_COUNT) {
+        return nullptr;
+    }
+    return pot_contexts[pot_id].sample_queue;
 }
 
 bool potentiometer_get_percent(potentiometer_id_t pot_id, float* out_percent) {
