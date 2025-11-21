@@ -53,6 +53,6 @@
 // PARÂMETROS COMPARTILHADOS DE STEPPER
 // =============================================================================
 #define HAL_STEPPER_DEFAULT_PULSE_WIDTH_US 10
-#define HAL_STEPPER_DEFAULT_STEP_DELAY_US  500
+#define HAL_STEPPER_DEFAULT_STEP_DELAY_US  1000
 
 #endif  // HARDWARE_HAL_H

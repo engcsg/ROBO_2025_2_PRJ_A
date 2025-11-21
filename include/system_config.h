@@ -24,7 +24,7 @@
 #define STEPPER_QUEUE_LENGTH      8
 #define STEPPER_COMPLETION_QUEUE  8
 
-#define STEPPER_DEFAULT_RELEASE   true
+#define STEPPER_DEFAULT_RELEASE   false
 #define STEPPER_DEFAULT_USE_RAMP  true
 
 #define POT_TASK_STACK_SIZE            2048
