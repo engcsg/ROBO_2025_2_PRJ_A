@@ -43,6 +43,14 @@
 #define CONTROLLER_ECHO_INTERVAL_MS        1000
 #define CONTROLLER_DEFAULT_SETPOINT        50.0f
 
+#define DEMO1_TASK_STACK_SIZE              4096
+#define DEMO1_TASK_PRIORITY                2
+#define DEMO1_TARGET_LOW_PERCENT           20.0f
+#define DEMO1_TARGET_HIGH_PERCENT          70.0f
+#define DEMO1_TOLERANCE_PERCENT            1.0f
+#define DEMO1_CHECK_INTERVAL_MS            100
+#define DEMO1_STAGE_DELAY_MS               2000
+
 #define SERIAL_COMMAND_PROMPT     "> "
 
 #endif // SYSTEM_CONFIG_H

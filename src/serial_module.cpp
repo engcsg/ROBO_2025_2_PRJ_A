@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -19,6 +20,8 @@ static serial_task_config_t serial_config = {
 };
 
 static QueueHandle_t cached_stepper_event_queue = nullptr;
+static TaskHandle_t demo1_task_handle = nullptr;
+static volatile bool demo1_stop_requested = false;
 
 static int tokenize_command(const String& command, String tokens[], int max_tokens) {
     int count = 0;
@@ -339,6 +342,114 @@ static void handle_ctrl_go_command(const String& command) {
     HAL_SERIAL_PORT.println();
 }
 
+typedef struct {
+    bool controller_was_enabled;
+} demo1_task_args_t;
+
+static demo1_task_args_t demo1_args = {};
+
+static void wait_for_pot_target(potentiometer_id_t pot_id, float target_percent) {
+    const TickType_t check_delay = pdMS_TO_TICKS(DEMO1_CHECK_INTERVAL_MS);
+    float percent = 0.0f;
+
+    while (!demo1_stop_requested) {
+        if (potentiometer_get_percent(pot_id, &percent)) {
+            if (fabsf(percent - target_percent) <= DEMO1_TOLERANCE_PERCENT) {
+                break;
+            }
+        }
+        vTaskDelay(check_delay);
+    }
+}
+
+static void demo1_task(void* pvParameters) {
+    auto* args = static_cast<demo1_task_args_t*>(pvParameters);
+    bool restore_controller = args != nullptr ? args->controller_was_enabled : false;
+
+    serial_module_log("DEMO1 iniciado");
+    controller_set_enabled(true);
+
+    while (!demo1_stop_requested) {
+        controller_set_setpoint(POTENTIOMETER_BASE, DEMO1_TARGET_LOW_PERCENT);
+        wait_for_pot_target(POTENTIOMETER_BASE, DEMO1_TARGET_LOW_PERCENT);
+        if (demo1_stop_requested) break;
+
+        controller_set_setpoint(POTENTIOMETER_ARM, DEMO1_TARGET_LOW_PERCENT);
+        wait_for_pot_target(POTENTIOMETER_ARM, DEMO1_TARGET_LOW_PERCENT);
+        if (demo1_stop_requested) break;
+
+        vTaskDelay(pdMS_TO_TICKS(DEMO1_STAGE_DELAY_MS));
+        if (demo1_stop_requested) break;
+
+        controller_set_setpoint(POTENTIOMETER_BASE, DEMO1_TARGET_HIGH_PERCENT);
+        wait_for_pot_target(POTENTIOMETER_BASE, DEMO1_TARGET_HIGH_PERCENT);
+        if (demo1_stop_requested) break;
+
+        controller_set_setpoint(POTENTIOMETER_ARM, DEMO1_TARGET_HIGH_PERCENT);
+        wait_for_pot_target(POTENTIOMETER_ARM, DEMO1_TARGET_HIGH_PERCENT);
+        if (demo1_stop_requested) break;
+
+        vTaskDelay(pdMS_TO_TICKS(DEMO1_STAGE_DELAY_MS));
+    }
+
+    if (!restore_controller) {
+        controller_set_enabled(false);
+    }
+
+    demo1_stop_requested = false;
+    demo1_task_handle = nullptr;
+    serial_module_log("DEMO1 finalizado");
+    vTaskDelete(nullptr);
+}
+
+static void start_demo1_sequence() {
+    if (demo1_task_handle != nullptr) {
+        HAL_SERIAL_PORT.println("DEMO1 ja esta em execucao.");
+        return;
+    }
+
+    demo1_stop_requested = false;
+    demo1_args.controller_was_enabled = controller_is_enabled();
+
+    BaseType_t result = xTaskCreate(
+        demo1_task,
+        "Demo1",
+        DEMO1_TASK_STACK_SIZE,
+        &demo1_args,
+        DEMO1_TASK_PRIORITY,
+        &demo1_task_handle);
+
+    if (result != pdPASS) {
+        demo1_task_handle = nullptr;
+        HAL_SERIAL_PORT.println("Falha ao iniciar DEMO1.");
+    } else {
+        HAL_SERIAL_PORT.println("DEMO1 iniciado.");
+    }
+}
+
+static void stop_demo1_sequence() {
+    if (demo1_task_handle == nullptr) {
+        HAL_SERIAL_PORT.println("DEMO1 nao esta em execucao.");
+        return;
+    }
+
+    demo1_stop_requested = true;
+    HAL_SERIAL_PORT.println("Parada do DEMO1 solicitada.");
+}
+
+static void handle_demo1_command(const String& command) {
+    String tokens[2];
+    int count = tokenize_command(command, tokens, 2);
+
+    if (count == 1 || tokens[1] == "START") {
+        start_demo1_sequence();
+    } else if (tokens[1] == "STOP") {
+        stop_demo1_sequence();
+    } else {
+        HAL_SERIAL_PORT.println("Uso: DEMO1 [START|STOP]");
+    }
+}
+
 static void serial_print_banner() {
     HAL_SERIAL_PORT.println();
     HAL_SERIAL_PORT.println("=================================");
@@ -358,6 +469,7 @@ static void serial_print_banner() {
     HAL_SERIAL_PORT.println("  CTRLSP Xnnn / Ynnn - define setpoint (%)");
     HAL_SERIAL_PORT.println("  CTRLGO Xnnn Ymmm - define SP de ambos os eixos");
     HAL_SERIAL_PORT.println("  CTRLPOSECHO X|Y|ALL <ON|OFF> - echo da posicao");
+    HAL_SERIAL_PORT.println("  DEMO1 [START|STOP] - sequencia 20%->70% base/braco");
     HAL_SERIAL_PORT.println("=================================");
     HAL_SERIAL_PORT.print(SERIAL_COMMAND_PROMPT);
 }
@@ -486,6 +598,8 @@ static void process_command(String command) {
         handle_ctrl_pose_echo_command(command);
     } else if (command.startsWith("CTRL")) {
         handle_ctrl_enable_command(command);
+    } else if (command.startsWith("DEMO1")) {
+        handle_demo1_command(command);
     } else {
         HAL_SERIAL_PORT.print("Comando desconhecido: ");
         HAL_SERIAL_PORT.println(command);
