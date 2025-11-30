@@ -23,6 +23,8 @@ static QueueHandle_t cached_stepper_event_queue = nullptr;
 static TaskHandle_t demo1_task_handle = nullptr;
 static volatile bool demo1_stop_requested = false;
 
+static bool servo_initialized = false;
+
 static int tokenize_command(const String& command, String tokens[], int max_tokens) {
     int count = 0;
     int length = command.length();
@@ -450,6 +452,64 @@ static void handle_demo1_command(const String& command) {
     }
 }
 
+static uint32_t servo_angle_to_duty(float angle_deg) {
+    float clamped = angle_deg;
+    if (clamped < 0.0f) clamped = 0.0f;
+    if (clamped > 180.0f) clamped = 180.0f;
+
+    float pulse_us = HAL_SERVO_MIN_PULSE_US +
+        (HAL_SERVO_MAX_PULSE_US - HAL_SERVO_MIN_PULSE_US) * (clamped / 180.0f);
+
+    const uint32_t max_duty = (1 << HAL_SERVO_PWM_RESOLUTION_BITS) - 1;
+    const float period_us = 1e6f / HAL_SERVO_PWM_FREQUENCY_HZ;
+    return static_cast<uint32_t>((pulse_us / period_us) * max_duty);
+}
+
+static bool servo_init_if_needed() {
+    if (servo_initialized) {
+        return true;
+    }
+
+    if (!HAL_IS_VALID_GPIO(static_cast<uint8_t>(HAL_SERVO_PWM_PIN))) {
+        HAL_SERIAL_PORT.println("Pino de servo invalido.");
+        return false;
+    }
+
+    ledcSetup(HAL_SERVO_PWM_CHANNEL, HAL_SERVO_PWM_FREQUENCY_HZ, HAL_SERVO_PWM_RESOLUTION_BITS);
+    ledcAttachPin(static_cast<uint8_t>(HAL_SERVO_PWM_PIN), HAL_SERVO_PWM_CHANNEL);
+    servo_initialized = true;
+    return true;
+}
+
+static void servo_write_angle(float angle_deg) {
+    uint32_t duty = servo_angle_to_duty(angle_deg);
+    ledcWrite(HAL_SERVO_PWM_CHANNEL, duty);
+}
+
+static void handle_servo_command(const String& command) {
+    String tokens[3];
+    int count = tokenize_command(command, tokens, 3);
+
+    if (!servo_init_if_needed()) {
+        return;
+    }
+
+    if (count < 2) {
+        HAL_SERIAL_PORT.println("Uso: SERVO OPEN|CLOSE");
+        return;
+    }
+
+    if (tokens[1] == "OPEN") {
+        servo_write_angle(SERVO_OPEN_VALUE);
+        HAL_SERIAL_PORT.println("Servo em ABERTO.");
+    } else if (tokens[1] == "CLOSE") {
+        servo_write_angle(SERVO_CLOSED_VALUE);
+        HAL_SERIAL_PORT.println("Servo em FECHADO.");
+    } else {
+        HAL_SERIAL_PORT.println("Estado invalido. Use OPEN ou CLOSE.");
+    }
+}
+
 static void serial_print_banner() {
     HAL_SERIAL_PORT.println();
     HAL_SERIAL_PORT.println("=================================");
@@ -470,6 +530,7 @@ static void serial_print_banner() {
     HAL_SERIAL_PORT.println("  CTRLGO Xnnn Ymmm - define SP de ambos os eixos");
     HAL_SERIAL_PORT.println("  CTRLPOSECHO X|Y|ALL <ON|OFF> - echo da posicao");
     HAL_SERIAL_PORT.println("  DEMO1 [START|STOP] - sequencia 20%->70% base/braco");
+    HAL_SERIAL_PORT.println("  SERVO OPEN|CLOSE - move servo para aberto/fechado");
     HAL_SERIAL_PORT.println("=================================");
     HAL_SERIAL_PORT.print(SERIAL_COMMAND_PROMPT);
 }
@@ -600,6 +661,8 @@ static void process_command(String command) {
         handle_ctrl_enable_command(command);
     } else if (command.startsWith("DEMO1")) {
         handle_demo1_command(command);
+    } else if (command.startsWith("SERVO")) {
+        handle_servo_command(command);
     } else {
         HAL_SERIAL_PORT.print("Comando desconhecido: ");
         HAL_SERIAL_PORT.println(command);

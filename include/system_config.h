@@ -51,6 +51,9 @@
 #define DEMO1_CHECK_INTERVAL_MS            100
 #define DEMO1_STAGE_DELAY_MS               2000
 
+#define SERVO_OPEN_VALUE                   10
+#define SERVO_CLOSED_VALUE                 40
+
 #define SERIAL_COMMAND_PROMPT     "> "
 
 #endif // SYSTEM_CONFIG_H

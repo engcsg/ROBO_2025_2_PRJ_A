@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+#define HAL_IS_VALID_GPIO(pin) ((pin) <= 39)
+
 /**
  * @file hardware_hal.h
  * @brief Hardware Abstraction Layer para o projeto ESP32.
@@ -12,7 +14,7 @@
  */
 
 // =============================================================================
-// LEDS
+// LEDSh
 // =============================================================================
 #define HAL_LED_BUILTIN_PIN        GPIO_NUM_2
 
@@ -48,6 +50,16 @@
 #define HAL_POT_ARM_PIN                    GPIO_NUM_35  // ADC1_7   - D35
 #define HAL_POT_ADC_MIN_VALUE              0
 #define HAL_POT_ADC_MAX_VALUE              4095
+
+// =============================================================================
+// SERVO (PWM)
+// =============================================================================
+#define HAL_SERVO_PWM_PIN                  GPIO_NUM_14 // D14
+#define HAL_SERVO_PWM_CHANNEL              7
+#define HAL_SERVO_PWM_FREQUENCY_HZ         50
+#define HAL_SERVO_PWM_RESOLUTION_BITS      16
+#define HAL_SERVO_MIN_PULSE_US             500
+#define HAL_SERVO_MAX_PULSE_US             2500
 
 // =============================================================================
 // PARÂMETROS COMPARTILHADOS DE STEPPER
